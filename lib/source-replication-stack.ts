@@ -9,14 +9,14 @@ export class SourceReplicationStack extends cdk.Stack {
     super(scope, id, props);
 
     const synapseStack = this.node.tryGetContext('synapseStack') as string;
+    if (!synapseStack) throw new Error('Missing context: synapseStack ("dev | prod")');
+
     const destBucketArn = this.node.tryGetContext('destBucketArn') as string;
     const destAccountId = this.node.tryGetContext('destAccountId') as string;
     const destDataKeyArn = this.node.tryGetContext('destDataKeyArn') as string;
     const replicationPrefix = (this.node.tryGetContext('replicationPrefix') as string) || 'rds-snapshot/';
     const replicationRoleName = (this.node.tryGetContext('replicationRoleName') as string) || `${synapseStack.toLowerCase()}-rds-repl-role`;
     const setupDestinationAccess = destAccountId && destBucketArn && destDataKeyArn;
-
-    if (!synapseStack) throw new Error('Missing context: synapseStack ("dev | prod")');
 
     // KMS key to encrypt source bucket objects
     const sourceDataKey = new kms.Key(this, 'SourceBucketKey', {
@@ -31,7 +31,7 @@ export class SourceReplicationStack extends cdk.Stack {
       encryptionKey: sourceDataKey,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       enforceSSL: true,
-      removalPolicy: cdk.RemovalPolicy.DESTROY, // RETAIN for production
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
       autoDeleteObjects: false,
     });
 
@@ -91,11 +91,11 @@ export class SourceReplicationStack extends cdk.Stack {
     rdsExportRole.addToPolicy(new iam.PolicyStatement({
       actions: [
         's3:PutObject',
-        "s3:GetObject",
-        "s3:DeleteObject",
+        's3:GetObject',
+        's3:DeleteObject',
         's3:AbortMultipartUpload',
-        "s3:ListMultipartUploadParts",
-        "s3:ListBucketMultipartUploads",
+        's3:ListMultipartUploadParts',
+        's3:ListBucketMultipartUploads',
         's3:ListBucket',
         's3:GetBucketLocation',
       ],
@@ -108,6 +108,8 @@ export class SourceReplicationStack extends cdk.Stack {
     // KMS permissions for export encryption
     rdsExportRole.addToPolicy(new iam.PolicyStatement({
       actions: [
+        'kms:Encrypt',
+        'kms:GenerateDataKey*',
         'kms:Decrypt',
         'kms:DescribeKey',
       ],
@@ -127,8 +129,8 @@ export class SourceReplicationStack extends cdk.Stack {
         'ForAnyValue:StringEquals': {
           'kms:ResourceAliases': [ `alias/${destDataKeyAlias}`, ],
         },
-        "StringEquals": {
-            "kms:ViaService": "s3.us-east-1.amazonaws.com"
+        'StringEquals': {
+            'kms:ViaService': 's3.us-east-1.amazonaws.com'
         }
       }
     }));
