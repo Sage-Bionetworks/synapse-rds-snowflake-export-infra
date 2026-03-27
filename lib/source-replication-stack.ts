@@ -3,6 +3,11 @@ import { Construct } from 'constructs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as kms from 'aws-cdk-lib/aws-kms';
+import * as lambda from 'aws-cdk-lib/aws-lambda-nodejs';
+import * as lambdaBase from 'aws-cdk-lib/aws-lambda';
+import * as events from 'aws-cdk-lib/aws-events';
+import * as targets from 'aws-cdk-lib/aws-events-targets';
+import * as path from 'path';
 
 export class SourceReplicationStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -23,7 +28,7 @@ export class SourceReplicationStack extends cdk.Stack {
       enableKeyRotation: true,
       alias: `alias/${synapseStack.toLowerCase()}-source-rds-repl-bucket-key`,
     });
-  
+
     const sourceBucket = new s3.Bucket(this, 'SourceBucket', {
       bucketName : `${synapseStack.toLowerCase()}-source-rds-snapshot-replication`,
       versioned: true,
@@ -116,6 +121,34 @@ export class SourceReplicationStack extends cdk.Stack {
       resources: [sourceDataKey.keyArn],
     }));
 
+    // Allow administration by account root
+    sourceDataKey.addToResourcePolicy(new iam.PolicyStatement({
+      sid: 'Allow administration by account root',
+      effect: iam.Effect.ALLOW,
+      principals: [new iam.AccountRootPrincipal()],
+      actions: ['kms:*'],
+      resources: ['*'],
+    }));
+
+    // Allow use of the key by all IAM users/roles in the account
+    // Grant use of the key to the RDS export role (required for RDS snapshot export)
+    // Reference the role created above to avoid hardcoding the ARN
+    sourceDataKey.addToResourcePolicy(new iam.PolicyStatement({
+      sid: 'Allow use of the key by RDS export role',
+      effect: iam.Effect.ALLOW,
+      principals: [
+        new iam.ArnPrincipal(rdsExportRole.roleArn)
+      ],
+      actions: [
+        'kms:Encrypt',
+        'kms:Decrypt',
+        'kms:ReEncrypt*',
+        'kms:GenerateDataKey*',
+        'kms:DescribeKey',
+      ],
+      resources: ['*'],
+    }));
+  
     // KMS permissions to use destination key for replication
     // Using alias allows referecing the key before it exists 
     const destDataKeyAlias = 'kms-synapse-snowflake-rds-snapshots-'+synapseStack.toLowerCase();
@@ -158,6 +191,40 @@ export class SourceReplicationStack extends cdk.Stack {
           },
         ],
       };
+
+      // Lambda to discover latest RDS snapshot and export it to S3 daily
+      const exportLambda = new lambda.NodejsFunction(this, 'RdsExportLambda', {
+        entry: path.join(__dirname, '../lambda/rds-export/index.ts'),
+        handler: 'handler',
+        runtime: lambdaBase.Runtime.NODEJS_20_X,
+        timeout: cdk.Duration.seconds(60),
+        environment: {
+          SYNAPSE_STACK: synapseStack,
+          S3_BUCKET_NAME: sourceBucket.bucketName,
+          S3_PREFIX: replicationPrefix,
+          RDS_EXPORT_ROLE_ARN: rdsExportRole.roleArn,
+          KMS_KEY_ID: sourceDataKey.keyArn,
+        },
+        bundling: {
+          externalModules: ['@aws-sdk/*'],
+        },
+      });
+
+      exportLambda.addToRolePolicy(new iam.PolicyStatement({
+        actions: ['rds:DescribeDBSnapshots', 'rds:DescribeExportTasks', 'rds:StartExportTask'],
+        resources: ['*'],
+      }));
+
+      exportLambda.addToRolePolicy(new iam.PolicyStatement({
+        actions: ['iam:PassRole'],
+        resources: [rdsExportRole.roleArn],
+      }));
+
+      // const exportSchedule = new events.Rule(this, 'RdsExportSchedule', {
+      //   schedule: events.Schedule.cron({ hour: '24', minute: '0' }),
+      // });
+      // exportSchedule.addTarget(new targets.LambdaFunction(exportLambda));
+
     }
 
     new cdk.CfnOutput(this, 'SourceBucketName', { value: sourceBucket.bucketName });

@@ -17,7 +17,9 @@
     "ts-jest": "^29",
     "aws-cdk": "2.1111.0",
     "ts-node": "^10.9.2",
-    "typescript": "~5.9.3"
+    "typescript": "~5.9.3",
+    "esbuild": "^0.25",
+    "@aws-sdk/client-rds": "^3"
   },
   "dependencies": {
     "aws-cdk-lib": "^2.242.0",
