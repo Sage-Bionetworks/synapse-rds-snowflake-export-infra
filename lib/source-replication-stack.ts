@@ -145,6 +145,7 @@ export class SourceReplicationStack extends cdk.Stack {
         'kms:ReEncrypt*',
         'kms:GenerateDataKey*',
         'kms:DescribeKey',
+        "kms:CreateGrant"
       ],
       resources: ['*'],
     }));
@@ -218,6 +219,11 @@ export class SourceReplicationStack extends cdk.Stack {
       exportLambda.addToRolePolicy(new iam.PolicyStatement({
         actions: ['iam:PassRole'],
         resources: [rdsExportRole.roleArn],
+      }));
+
+      exportLambda.addToRolePolicy(new iam.PolicyStatement({
+        actions: ['kms:Decrypt', 'kms:DescribeKey', 'kms:CreateGrant'],
+        resources: [sourceDataKey.keyArn],
       }));
 
       // const exportSchedule = new events.Rule(this, 'RdsExportSchedule', {
