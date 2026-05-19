@@ -3,7 +3,7 @@ import { RDSClient, DescribeDBSnapshotsCommand, DescribeExportTasksCommand, Star
 const rds = new RDSClient({});
 
 const VERSION_ENDPOINTS: Record<string, string> = {
-  prod: 'https://repo-prod.prod.synapse.org/repo/v1/version',
+  prod: 'https://repo-prod.prod.sagebase.org/repo/v1/version',
   dev: 'https://repo-prod.dev.sagebase.org/repo/v1/version',
 };
 
@@ -75,9 +75,13 @@ export async function handler(): Promise<void> {
   const latestSnapshot = sorted[0];
   console.log(`Latest snapshot: ${latestSnapshot.DBSnapshotIdentifier} (created ${latestSnapshot.SnapshotCreateTime?.toISOString()})`);
 
-  // 4. Build export task identifier (alphanumeric + hyphens only, strip "rds:" prefix)
-  const snapshotId = latestSnapshot.DBSnapshotIdentifier!.replace(/^rds:/, '');
-  const exportTaskId = `${synapseStack}-${snapshotId}-${today}`;
+  // 4. Build export task identifier
+  let snapshotId = latestSnapshot.DBSnapshotIdentifier!;
+  if (synapseStack === 'prod') {
+    // Remove leading 'rds:' and last 6 characters (e.g., '-hh-mm')
+    snapshotId = snapshotId.replace(/^rds:/, '').slice(0, -6);
+  }
+  const exportTaskId = `${snapshotId}`;
 
   console.log(`Starting export task "${exportTaskId}"`);
   const exportResult = await rds.send(new StartExportTaskCommand({
