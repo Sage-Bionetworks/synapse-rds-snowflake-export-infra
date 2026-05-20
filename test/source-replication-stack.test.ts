@@ -13,11 +13,17 @@ function createStack(context: Record<string, string> = {}): Template {
   return Template.fromStack(stack);
 }
 
-describe('Lambda and EventBridge', () => {
+const destContext = {
+  destBucketArn: 'arn:aws:s3:::dest-bucket',
+  destAccountId: '123456789012',
+  destDataKeyArn: 'arn:aws:kms:us-east-1:123456789012:key/dest-key-id',
+};
+
+describe('Lambda (dev, with destination)', () => {
   let template: Template;
 
   beforeAll(() => {
-    template = createStack();
+    template = createStack(destContext);
   });
 
   test('Lambda function is created with correct environment variables', () => {
@@ -59,9 +65,21 @@ describe('Lambda and EventBridge', () => {
     });
   });
 
-  test('EventBridge rule exists with daily 05:00 UTC schedule', () => {
+  test('No EventBridge schedule is created for dev', () => {
+    template.resourceCountIs('AWS::Events::Rule', 0);
+  });
+});
+
+describe('EventBridge schedule (prod, with destination)', () => {
+  let template: Template;
+
+  beforeAll(() => {
+    template = createStack({ ...destContext, synapseStack: 'prod' });
+  });
+
+  test('EventBridge rule exists with daily 06:00 UTC schedule', () => {
     template.hasResourceProperties('AWS::Events::Rule', {
-      ScheduleExpression: 'cron(0 5 * * ? *)',
+      ScheduleExpression: 'cron(0 6 * * ? *)',
       State: 'ENABLED',
     });
   });
@@ -78,12 +96,6 @@ describe('Lambda and EventBridge', () => {
 });
 
 describe('when destination parameters are specified', () => {
-  const destContext = {
-    destBucketArn: 'arn:aws:s3:::dest-bucket',
-    destAccountId: '123456789012',
-    destDataKeyArn: 'arn:aws:kms:us-east-1:123456789012:key/dest-key-id',
-  };
-
   let template: Template;
 
   beforeAll(() => {

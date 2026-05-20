@@ -19,8 +19,6 @@ export async function handler(): Promise<void> {
   const rdsExportRoleArn = process.env.RDS_EXPORT_ROLE_ARN!;
   const kmsKeyId = process.env.KMS_KEY_ID!;
 
-  const today = new Date().toISOString().slice(0, 10); // yyyy-mm-dd
-
   // 1. Fetch current Synapse version
   const versionUrl = VERSION_ENDPOINTS[synapseStack];
   if (!versionUrl) {
@@ -38,24 +36,7 @@ export async function handler(): Promise<void> {
 
   const dbInstanceId = `${synapseStack}-${stackInstance}-db`;
 
-  // 2. Check for existing export for today
-  const exportTaskPrefix = `${synapseStack}-${dbInstanceId}`;
-  console.log(`Checking for existing export tasks matching prefix "${exportTaskPrefix}" for date ${today}`);
-
-  const existingTasks = await rds.send(new DescribeExportTasksCommand({}));
-  const todaysTask = existingTasks.ExportTasks?.find(
-    (task) => task.ExportTaskIdentifier?.startsWith(exportTaskPrefix) && task.ExportTaskIdentifier?.endsWith(today)
-  );
-
-  if (todaysTask) {
-    const status = todaysTask.Status;
-    if (status === 'STARTING' || status === 'IN_PROGRESS' || status === 'COMPLETE') {
-      console.log(`Export task "${todaysTask.ExportTaskIdentifier}" already exists with status "${status}". Skipping.`);
-      return;
-    }
-  }
-
-  // 3. Find the latest automated snapshot for the DB instance
+  // 2. Find the latest snapshot for the DB instance
   const snapshotType = synapseStack === 'dev' ? 'manual' : 'automated';
   console.log(`Looking for ${snapshotType} snapshots for DB instance "${dbInstanceId}"`);
   const snapshots = await rds.send(new DescribeDBSnapshotsCommand({
@@ -64,7 +45,7 @@ export async function handler(): Promise<void> {
   }));
 
   if (!snapshots.DBSnapshots || snapshots.DBSnapshots.length === 0) {
-    console.warn(`No automated snapshots found for DB instance "${dbInstanceId}". Exiting.`);
+    console.warn(`No ${snapshotType} snapshots found for DB instance "${dbInstanceId}". Exiting.`);
     return;
   }
 
@@ -75,20 +56,31 @@ export async function handler(): Promise<void> {
   const latestSnapshot = sorted[0];
   console.log(`Latest snapshot: ${latestSnapshot.DBSnapshotIdentifier} (created ${latestSnapshot.SnapshotCreateTime?.toISOString()})`);
 
-  // 4. Build export task identifier
+  // 3. Build export task identifier
   let snapshotId = latestSnapshot.DBSnapshotIdentifier!;
   if (synapseStack === 'prod') {
-    // Remove leading 'rds:' and last 6 characters (e.g., '-hh-mm')
+    // Automated snapshots look like `rds:<db>-YYYY-MM-DD-HH-MM`; strip prefix and trailing `-HH-MM`
     snapshotId = snapshotId.replace(/^rds:/, '').slice(0, -6);
   }
-  const exportTaskId = `${snapshotId}`;
+  const exportTaskId = snapshotId;
 
+  // 4. Skip if an export with this identifier already exists in a non-terminal/successful state
+  const existingTasks = await rds.send(new DescribeExportTasksCommand({
+    ExportTaskIdentifier: exportTaskId,
+  }));
+  const existing = existingTasks.ExportTasks?.[0];
+  if (existing && ['STARTING', 'IN_PROGRESS', 'COMPLETE'].includes(existing.Status ?? '')) {
+    console.log(`Export task "${exportTaskId}" already exists with status "${existing.Status}". Skipping.`);
+    return;
+  }
+
+  // 5. Start the export. Strip trailing slash(es) so RDS doesn't produce keys like `prefix//<task>/...`
   console.log(`Starting export task "${exportTaskId}"`);
   const exportResult = await rds.send(new StartExportTaskCommand({
     ExportTaskIdentifier: exportTaskId,
     SourceArn: latestSnapshot.DBSnapshotArn!,
     S3BucketName: s3BucketName,
-    S3Prefix: `${s3Prefix}/`,
+    S3Prefix: s3Prefix.replace(/\/+$/, ''),
     IamRoleArn: rdsExportRoleArn,
     KmsKeyId: kmsKeyId,
   }));

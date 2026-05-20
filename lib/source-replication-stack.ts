@@ -227,8 +227,8 @@ export class SourceReplicationStack extends cdk.Stack {
       }));
 
       if (synapseStack.toLowerCase() === 'prod') {
+        // Daily at 06:00 UTC; RDS automated snapshots typically run around 03:00 UTC
         const exportSchedule = new events.Rule(this, 'RdsExportSchedule', {
-          // Schedule to run the export Lambda daily at 6 AM UTC (1 AM EST), snapshots are usually taken at 3 AM UTC
           schedule: events.Schedule.cron({ hour: '6', minute: '0' }),
         });
         exportSchedule.addTarget(new targets.LambdaFunction(exportLambda));
