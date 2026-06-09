@@ -124,7 +124,7 @@ async function copyOne(
 ): Promise<void> {
   // RDS export key shape: <prefix>/<exportTaskId>/<dbId>/<schema>.<table>/<n>/<part>.parquet
   const segments = srcKey.split('/');
-  const schemaTableSeg = segments.find((s) => /^[a-z0-9_]+\.[a-z0-9_]+$/.test(s));
+  const schemaTableSeg = segments.find((s) => /^[a-z0-9_]+\.[a-z0-9_]+$/i.test(s));
   if (!schemaTableSeg) {
     throw new Error(`Cannot derive table from key "${srcKey}"`);
   }
