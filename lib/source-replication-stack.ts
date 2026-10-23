@@ -133,13 +133,11 @@ export class SourceReplicationStack extends cdk.Stack {
         resources: [sourceDataKey.keyArn],
       }));
 
-      if (synapseStack.toLowerCase() === 'prod') {
-        // Daily at 06:00 UTC; RDS automated snapshots typically run around 03:00 UTC
-        const exportSchedule = new events.Rule(this, 'RdsExportSchedule', {
-          schedule: events.Schedule.cron({ hour: '6', minute: '0' }),
-        });
-        exportSchedule.addTarget(new targets.LambdaFunction(exportLambda));
-      }
+      // Daily at 06:00 UTC; RDS automated snapshots typically run around 03:00 UTC
+      const exportSchedule = new events.Rule(this, 'RdsExportSchedule', {
+        schedule: events.Schedule.cron({ hour: '6', minute: '0' }),
+      });
+      exportSchedule.addTarget(new targets.LambdaFunction(exportLambda));
 
       // Lambda to copy each Parquet part from the source bucket into the destination
       // bucket under a layout grouped by table / stack / snapshot date.

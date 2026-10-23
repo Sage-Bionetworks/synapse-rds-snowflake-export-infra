@@ -37,7 +37,7 @@ export async function handler(): Promise<void> {
   const dbInstanceId = `${synapseStack}-${stackInstance}-db`;
 
   // 2. Find the latest snapshot for the DB instance
-  const snapshotType = synapseStack === 'dev' ? 'manual' : 'automated';
+  const snapshotType = 'automated';
   console.log(`Looking for ${snapshotType} snapshots for DB instance "${dbInstanceId}"`);
   const snapshots = await rds.send(new DescribeDBSnapshotsCommand({
     DBInstanceIdentifier: dbInstanceId,
@@ -57,12 +57,8 @@ export async function handler(): Promise<void> {
   console.log(`Latest snapshot: ${latestSnapshot.DBSnapshotIdentifier} (created ${latestSnapshot.SnapshotCreateTime?.toISOString()})`);
 
   // 3. Build export task identifier
-  let snapshotId = latestSnapshot.DBSnapshotIdentifier!;
-  if (synapseStack === 'prod') {
-    // Automated snapshots look like `rds:<db>-YYYY-MM-DD-HH-MM`; strip prefix and trailing `-HH-MM`
-    snapshotId = snapshotId.replace(/^rds:/, '').slice(0, -6);
-  }
-  const exportTaskId = snapshotId;
+  // Automated snapshots look like `rds:<db>-YYYY-MM-DD-HH-MM`; strip prefix and trailing `-HH-MM`
+  const exportTaskId = latestSnapshot.DBSnapshotIdentifier!.replace(/^rds:/, '').slice(0, -6);
 
   // 4. Skip if an export with this identifier already exists in a non-terminal/successful state
   const existingTasks = await rds.send(new DescribeExportTasksCommand({
