@@ -67,20 +67,12 @@ describe('Export Lambda (dev, with destination)', () => {
 });
 
 describe('EventBridge schedule', () => {
-  test('prod has a daily 06:00 UTC schedule rule', () => {
-    const template = createStack({ ...destContext, synapseStack: 'prod' });
+  test.each(['dev', 'prod'])('%s has a daily 06:00 UTC schedule rule', (synapseStack) => {
+    const template = createStack({ ...destContext, synapseStack });
     template.hasResourceProperties('AWS::Events::Rule', {
       ScheduleExpression: 'cron(0 6 * * ? *)',
       State: 'ENABLED',
     });
-  });
-
-  test('dev has no schedule rule', () => {
-    const template = createStack(destContext);
-    const rules = template.findResources('AWS::Events::Rule', {
-      Properties: { ScheduleExpression: Match.anyValue() },
-    });
-    expect(Object.keys(rules)).toHaveLength(0);
   });
 });
 
