@@ -155,9 +155,42 @@ describe('Copy Lambda + event rule (dev, with destination)', () => {
     });
   });
 
-  test('DLQ and duration alarm exist', () => {
+  test('DLQ uses SSE-SQS (EventBridge cannot use aws/sqs KMS key)', () => {
     template.resourceCountIs('AWS::SQS::Queue', 1);
-    template.resourceCountIs('AWS::CloudWatch::Alarm', 1);
+    template.hasResourceProperties('AWS::SQS::Queue', {
+      SqsManagedSseEnabled: true,
+      KmsMasterKeyId: Match.absent(),
+    });
+  });
+
+  test('copy Lambda sends execution failures to the DLQ after 2 retries', () => {
+    const dlqLogicalId = Object.keys(template.findResources('AWS::SQS::Queue'))[0];
+    template.hasResourceProperties('AWS::Lambda::EventInvokeConfig', {
+      MaximumRetryAttempts: 2,
+      DestinationConfig: {
+        OnFailure: { Destination: { 'Fn::GetAtt': [dlqLogicalId, 'Arn'] } },
+      },
+    });
+  });
+
+  test('duration, errors and DLQ alarms all notify the imported SNS topic', () => {
+    template.resourceCountIs('AWS::CloudWatch::Alarm', 3);
+    const importedTopic = {
+      'Fn::ImportValue': 'us-east-1-synapse-dev-global-resources-NotificationTopic',
+    };
+    for (const metricName of ['Duration', 'Errors', 'ApproximateNumberOfMessagesVisible']) {
+      template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+        MetricName: metricName,
+        AlarmActions: [importedTopic],
+      });
+    }
+  });
+
+  test('prod alarms import the prod notification topic', () => {
+    const prod = createStack({ ...destContext, synapseStack: 'prod' });
+    prod.hasResourceProperties('AWS::CloudWatch::Alarm', {
+      AlarmActions: [{ 'Fn::ImportValue': 'us-east-1-synapse-prod-global-resources-NotificationTopic' }],
+    });
   });
 
   test('exposes copy Lambda role ARN as a stack output', () => {

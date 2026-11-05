@@ -9,6 +9,9 @@ import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
+import * as cloudwatchActions from 'aws-cdk-lib/aws-cloudwatch-actions';
+import * as sns from 'aws-cdk-lib/aws-sns';
+import * as lambdaDestinations from 'aws-cdk-lib/aws-lambda-destinations';
 import * as path from 'path';
 
 export class SourceReplicationStack extends cdk.Stack {
@@ -144,6 +147,14 @@ export class SourceReplicationStack extends cdk.Stack {
       // S3 ARNs have the form `arn:aws:s3:::name`; bucket name is the 6th colon-delimited segment.
       const destBucketName = cdk.Fn.select(5, cdk.Fn.split(':', destBucketArn));
 
+      // Receives both EventBridge delivery failures (target DLQ) and Lambda execution
+      // failures after async retries (on-failure destination).
+      // SSE-SQS rather than aws/sqs: EventBridge cannot use the AWS-managed SQS KMS key.
+      const copyDlq = new sqs.Queue(this, 'RdsExportCopyDlq', {
+        retentionPeriod: cdk.Duration.days(14),
+        encryption: sqs.QueueEncryption.SQS_MANAGED,
+      });
+
       const copyLambda = new lambda.NodejsFunction(this, 'RdsExportCopyLambda', {
         entry: path.join(__dirname, '../lambda/rds-export-copy/index.ts'),
         handler: 'handler',
@@ -161,6 +172,8 @@ export class SourceReplicationStack extends cdk.Stack {
         bundling: {
           externalModules: ['@aws-sdk/*'],
         },
+        retryAttempts: 2,
+        onFailure: new lambdaDestinations.SqsDestination(copyDlq),
       });
 
       copyLambda.addToRolePolicy(new iam.PolicyStatement({
@@ -206,11 +219,6 @@ export class SourceReplicationStack extends cdk.Stack {
         resources: ['*'],
       }));
 
-      const copyDlq = new sqs.Queue(this, 'RdsExportCopyDlq', {
-        retentionPeriod: cdk.Duration.days(14),
-        encryption: sqs.QueueEncryption.KMS_MANAGED,
-      });
-
       // RDS emits export-task lifecycle events under "RDS DB Snapshot Event" with EventIDs.
       // RDS-EVENT-0161 = export task completed. Lambda re-verifies status via DescribeExportTasks.
       const copyRule = new events.Rule(this, 'RdsExportCopyEventRule', {
@@ -227,7 +235,11 @@ export class SourceReplicationStack extends cdk.Stack {
         deadLetterQueue: copyDlq,
       }));
 
-      new cloudwatch.Alarm(this, 'RdsExportCopyDurationAlarm', {
+      const notificationTopic = sns.Topic.fromTopicArn(this, 'NotificationTopic',
+        cdk.Fn.importValue(`us-east-1-synapse-${synapseStack}-global-resources-NotificationTopic`));
+      const notify = new cloudwatchActions.SnsAction(notificationTopic);
+
+      const durationAlarm = new cloudwatch.Alarm(this, 'RdsExportCopyDurationAlarm', {
         metric: copyLambda.metricDuration({ statistic: 'Maximum' }),
         threshold: cdk.Duration.minutes(12).toMilliseconds(),
         evaluationPeriods: 1,
@@ -235,6 +247,29 @@ export class SourceReplicationStack extends cdk.Stack {
         alarmDescription: 'RdsExportCopyLambda approaching 15-min ceiling; consider Step Functions fan-out.',
         treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
       });
+      durationAlarm.addAlarmAction(notify);
+
+      // Fires on the first failed attempt (each async retry counts as an error).
+      const errorsAlarm = new cloudwatch.Alarm(this, 'RdsExportCopyErrorsAlarm', {
+        metric: copyLambda.metricErrors({ statistic: 'Sum' }),
+        threshold: 0,
+        evaluationPeriods: 1,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+        alarmDescription: 'RdsExportCopyLambda execution failed; check CloudWatch Logs.',
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      });
+      errorsAlarm.addAlarmAction(notify);
+
+      // Fires once retries are exhausted (either stage); messages need inspection/redrive.
+      const dlqAlarm = new cloudwatch.Alarm(this, 'RdsExportCopyDlqAlarm', {
+        metric: copyDlq.metricApproximateNumberOfMessagesVisible({ statistic: 'Maximum' }),
+        threshold: 0,
+        evaluationPeriods: 1,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+        alarmDescription: 'RdsExportCopyDlq has messages: a copy failed permanently and needs redrive.',
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      });
+      dlqAlarm.addAlarmAction(notify);
 
       new cdk.CfnOutput(this, 'RdsExportCopyLambdaRoleArn', {
         value: copyLambda.role!.roleArn,
