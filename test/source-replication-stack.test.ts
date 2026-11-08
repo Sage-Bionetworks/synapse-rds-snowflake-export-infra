@@ -28,7 +28,7 @@ describe('Export Lambda (dev, with destination)', () => {
 
   test('export Lambda has expected env vars', () => {
     template.hasResourceProperties('AWS::Lambda::Function', {
-      Runtime: 'nodejs20.x',
+      Runtime: 'nodejs22.x',
       Environment: {
         Variables: Match.objectLike({
           SYNAPSE_STACK: 'dev',
@@ -85,7 +85,7 @@ describe('Copy Lambda + event rule (dev, with destination)', () => {
 
   test('copy Lambda exists with expected env vars', () => {
     template.hasResourceProperties('AWS::Lambda::Function', {
-      Runtime: 'nodejs20.x',
+      Runtime: 'nodejs22.x',
       Timeout: 900,
       MemorySize: 1024,
       Environment: {

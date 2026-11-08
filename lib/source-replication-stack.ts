@@ -107,7 +107,7 @@ export class SourceReplicationStack extends cdk.Stack {
       const exportLambda = new lambda.NodejsFunction(this, 'RdsExportLambda', {
         entry: path.join(__dirname, '../lambda/rds-export/index.ts'),
         handler: 'handler',
-        runtime: lambdaBase.Runtime.NODEJS_20_X,
+        runtime: lambdaBase.Runtime.NODEJS_22_X,
         timeout: cdk.Duration.seconds(60),
         environment: {
           SYNAPSE_STACK: synapseStack,
@@ -158,7 +158,7 @@ export class SourceReplicationStack extends cdk.Stack {
       const copyLambda = new lambda.NodejsFunction(this, 'RdsExportCopyLambda', {
         entry: path.join(__dirname, '../lambda/rds-export-copy/index.ts'),
         handler: 'handler',
-        runtime: lambdaBase.Runtime.NODEJS_20_X,
+        runtime: lambdaBase.Runtime.NODEJS_22_X,
         timeout: cdk.Duration.minutes(15),
         memorySize: 1024,
         environment: {
