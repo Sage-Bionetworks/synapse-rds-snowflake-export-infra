@@ -1,0 +1,40 @@
+*.js
+!jest.config.js
+*.d.ts
+
+# CDK asset staging directory
+.cdk.staging
+cdk.out
+
+# Node dependencies
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# CDK output and build artifacts
+cdk.out/
+dist/
+build/
+
+# TypeScript
+*.tsbuildinfo
+
+# IDE/editor files
+.vscode/
+.idea/
+.DS_Store
+
+# OS files
+Thumbs.db
+
+# Test coverage
+coverage/
+
+# Environment files
+.env
+
+# KIRO
+.kiro/
+
+# Claude
+.claude/
