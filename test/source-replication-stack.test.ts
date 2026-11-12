@@ -173,8 +173,8 @@ describe('Copy Lambda + event rule (dev, with destination)', () => {
     });
   });
 
-  test('duration, errors and DLQ alarms all notify the imported SNS topic', () => {
-    template.resourceCountIs('AWS::CloudWatch::Alarm', 3);
+  test('export errors, copy duration, copy errors and DLQ alarms all notify the imported SNS topic', () => {
+    template.resourceCountIs('AWS::CloudWatch::Alarm', 4);
     const importedTopic = {
       'Fn::ImportValue': 'us-east-1-synapse-dev-global-resources-NotificationTopic',
     };
@@ -184,6 +184,30 @@ describe('Copy Lambda + event rule (dev, with destination)', () => {
         AlarmActions: [importedTopic],
       });
     }
+  });
+
+  test('export Lambda has an errors alarm', () => {
+    const exportFnId = Object.entries(template.findResources('AWS::Lambda::Function'))
+      .find(([, r]) => r.Properties.Timeout === 60)![0];
+    template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+      MetricName: 'Errors',
+      Dimensions: [{ Name: 'FunctionName', Value: { Ref: exportFnId } }],
+      Threshold: 0,
+      ComparisonOperator: 'GreaterThanThreshold',
+    });
+  });
+
+  test('export failed/canceled events publish directly to the imported SNS topic', () => {
+    template.hasResourceProperties('AWS::Events::Rule', {
+      EventPattern: Match.objectLike({
+        source: ['aws.rds'],
+        'detail-type': ['RDS DB Snapshot Event'],
+        detail: { EventID: ['RDS-EVENT-0159', 'RDS-EVENT-0160'] },
+      }),
+      Targets: [Match.objectLike({
+        Arn: { 'Fn::ImportValue': 'us-east-1-synapse-dev-global-resources-NotificationTopic' },
+      })],
+    });
   });
 
   test('prod alarms import the prod notification topic', () => {
