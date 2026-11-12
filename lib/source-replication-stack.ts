@@ -103,6 +103,11 @@ export class SourceReplicationStack extends cdk.Stack {
     }));
 
     if (setupDestinationAccess) {
+      // Topic policy (Synapse-Stack-Builder global sns-template) allows CloudWatch and EventBridge to publish.
+      const notificationTopic = sns.Topic.fromTopicArn(this, 'NotificationTopic',
+        cdk.Fn.importValue(`us-east-1-synapse-${synapseStack}-global-resources-NotificationTopic`));
+      const notify = new cloudwatchActions.SnsAction(notificationTopic);
+
       // Lambda to discover latest RDS snapshot and export it to S3
       const exportLambda = new lambda.NodejsFunction(this, 'RdsExportLambda', {
         entry: path.join(__dirname, '../lambda/rds-export/index.ts'),
@@ -141,6 +146,30 @@ export class SourceReplicationStack extends cdk.Stack {
         schedule: events.Schedule.cron({ hour: '6', minute: '0' }),
       });
       exportSchedule.addTarget(new targets.LambdaFunction(exportLambda));
+
+      // Fires on any failed invocation of the export Lambda (including async retries).
+      const exportErrorsAlarm = new cloudwatch.Alarm(this, 'RdsExportErrorsAlarm', {
+        metric: exportLambda.metricErrors({ statistic: 'Sum' }),
+        threshold: 0,
+        evaluationPeriods: 1,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+        alarmDescription: 'RdsExportLambda execution failed; snapshot export was not started. Check CloudWatch Logs.',
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      });
+      exportErrorsAlarm.addAlarmAction(notify);
+
+      // RDS-EVENT-0159 = export task failed, RDS-EVENT-0160 = export task canceled.
+      // The copy Lambda only runs on RDS-EVENT-0161, so without this a failed export is silent.
+      const exportFailureRule = new events.Rule(this, 'RdsExportFailureEventRule', {
+        eventPattern: {
+          source: ['aws.rds'],
+          detailType: ['RDS DB Snapshot Event'],
+          detail: {
+            EventID: ['RDS-EVENT-0159', 'RDS-EVENT-0160'],
+          },
+        },
+      });
+      exportFailureRule.addTarget(new targets.SnsTopic(notificationTopic));
 
       // Lambda to copy each Parquet part from the source bucket into the destination
       // bucket under a layout grouped by table / stack / snapshot date.
@@ -234,10 +263,6 @@ export class SourceReplicationStack extends cdk.Stack {
         retryAttempts: 2,
         deadLetterQueue: copyDlq,
       }));
-
-      const notificationTopic = sns.Topic.fromTopicArn(this, 'NotificationTopic',
-        cdk.Fn.importValue(`us-east-1-synapse-${synapseStack}-global-resources-NotificationTopic`));
-      const notify = new cloudwatchActions.SnsAction(notificationTopic);
 
       const durationAlarm = new cloudwatch.Alarm(this, 'RdsExportCopyDurationAlarm', {
         metric: copyLambda.metricDuration({ statistic: 'Maximum' }),
